@@ -402,7 +402,7 @@ if cmd_exists dpkg; then
     done
 fi
 # Flag non-LTS kernels (stock Ubuntu 22.04 uses 5.15)
-if [[ "$running_kernel" != 5.15* ]]; then
+if [[ ! "$running_kernel" =~ ^5\.15 ]]; then
     csv_row "$CAT" "uname -r" \
         "Running kernel is not the stock Ubuntu 22.04 kernel" \
         "$running_kernel" "5.15.x-xx-generic"
@@ -1429,7 +1429,7 @@ fi
 log_info "Checking hostname..."
 if [[ -f /etc/hostname ]]; then
     hostname=$(cat /etc/hostname | tr -d '\n')
-    if [[ "$hostname" != "ubuntu" ]] && [[ "$hostname" != *"ubuntu"* ]]; then
+    if [[ "$hostname" != "ubuntu" ]]; then
         csv_row "$CAT" "/etc/hostname" \
             "Custom hostname set (not default 'ubuntu')" \
             "$hostname" "ubuntu (stock)"
@@ -1506,7 +1506,7 @@ if [[ -f /sys/module/zswap/parameters/enabled ]]; then
             "enabled" "disabled (stock)"
     fi
 fi
-if ls /dev/zram* &>/dev/null 2>&1; then
+if ls /dev/zram* &>/dev/null; then
     csv_row "$CAT" "/dev/zram*" \
         "zram compressed block device(s) present" \
         "present" "not present (stock)"
