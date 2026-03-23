@@ -21,7 +21,10 @@
 #  12. Desktop Environment
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
+
+# Catch unexpected errors without exiting; individual audit categories continue regardless
+trap 'echo "  [WARN] Unexpected error at line $LINENO, continuing..." >&2 ; true' ERR
 
 # ---------------------------------------------------------------------------
 # Constants and globals
@@ -282,9 +285,9 @@ audit_network() {
     # --- iptables / nftables rules ---
     info "Checking firewall rules (iptables/nftables)..."
     if cmd_exists iptables; then
-        local ipt_rules; ipt_rules=$(iptables-save 2>/dev/null | grep -v '^#\|^:.*\[0:0\]' | grep -v '^\*\|^COMMIT' | wc -l)
+        local ipt_rules; ipt_rules=$(iptables-save 2>/dev/null | grep -v '^#\|^:.*\[0:0\]' | grep -v '^\*\|^COMMIT' | wc -l || echo "0")
         if [[ "$ipt_rules" -gt 0 ]]; then
-            local ipt_summary; ipt_summary=$(iptables-save 2>/dev/null | grep -v '^#' | head -30 | tr '\n' ';')
+            local ipt_summary; ipt_summary=$(iptables-save 2>/dev/null | grep -v '^#' | head -30 | tr '\n' ';' || true)
             write_csv "Network Configuration" \
                 "iptables (kernel)" \
                 "Custom iptables rules are present ($ipt_rules non-default rule lines)" \
@@ -293,9 +296,9 @@ audit_network() {
     fi
 
     if cmd_exists nft; then
-        local nft_rules; nft_rules=$(nft list ruleset 2>/dev/null | grep -v '^#' | wc -l)
+        local nft_rules; nft_rules=$(nft list ruleset 2>/dev/null | grep -v '^#' | wc -l || echo "0")
         if [[ "$nft_rules" -gt 2 ]]; then
-            local nft_summary; nft_summary=$(nft list ruleset 2>/dev/null | head -20 | tr '\n' ';')
+            local nft_summary; nft_summary=$(nft list ruleset 2>/dev/null | head -20 | tr '\n' ';' || true)
             write_csv "Network Configuration" \
                 "nftables (kernel)" \
                 "Custom nftables ruleset present ($nft_rules lines)" \
@@ -1002,18 +1005,20 @@ audit_packages() {
 
     # --- dpkg-verify: modified conffiles ---
     info "Checking for modified package-managed config files (dpkg --verify)..."
-    # dpkg --verify output: lines starting with '??' or '5.' indicate changed files
-    if dpkg --verify &>/dev/null 2>&1 || true; then
-        local modified_conf; modified_conf=$(dpkg --verify 2>/dev/null | grep -P '^..5' | head -50 || true)
-        if [[ -n "$modified_conf" ]]; then
-            while IFS= read -r modline; do
-                local modfile; modfile=$(echo "$modline" | awk '{print $NF}')
-                write_csv "Package Management" \
-                    "$modfile" \
-                    "Package-managed config file has been modified (dpkg --verify)" \
-                    "$modline" "(unmodified — as shipped by package)"
-            done <<< "$modified_conf"
-        fi
+    # dpkg --verify output: lines starting with '??' or '5.' indicate changed files.
+    # dpkg --verify returns non-zero when modifications exist (that's expected here),
+    # and grep returns non-zero when no matches are found — both are normal; use || true
+    # so a clean system (no modified files) doesn't propagate a non-zero exit.
+    local modified_conf
+    modified_conf=$(dpkg --verify 2>/dev/null | grep -P '^..5' | head -50 || true)
+    if [[ -n "$modified_conf" ]]; then
+        while IFS= read -r modline; do
+            local modfile; modfile=$(echo "$modline" | awk '{print $NF}')
+            write_csv "Package Management" \
+                "$modfile" \
+                "Package-managed config file has been modified (dpkg --verify)" \
+                "$modline" "(unmodified — as shipped by package)"
+        done <<< "$modified_conf"
     fi
 }
 
@@ -1901,18 +1906,18 @@ main() {
     preflight_checks
     init_csv
 
-    audit_network
-    audit_kernel_boot
-    audit_storage
-    audit_gpu_drivers
-    audit_services
-    audit_packages
-    audit_user_environment
-    audit_languages
-    audit_security
-    audit_containers_virt
-    audit_system_config
-    audit_desktop
+    audit_network           || warn "Network audit encountered errors, continuing..."
+    audit_kernel_boot       || warn "Kernel/Boot audit encountered errors, continuing..."
+    audit_storage           || warn "Storage audit encountered errors, continuing..."
+    audit_gpu_drivers       || warn "GPU/Drivers audit encountered errors, continuing..."
+    audit_services          || warn "Services audit encountered errors, continuing..."
+    audit_packages          || warn "Packages audit encountered errors, continuing..."
+    audit_user_environment  || warn "User Environment audit encountered errors, continuing..."
+    audit_languages         || warn "Languages audit encountered errors, continuing..."
+    audit_security          || warn "Security audit encountered errors, continuing..."
+    audit_containers_virt   || warn "Containers/Virt audit encountered errors, continuing..."
+    audit_system_config     || warn "System Config audit encountered errors, continuing..."
+    audit_desktop           || warn "Desktop audit encountered errors, continuing..."
 
     print_summary
 }
